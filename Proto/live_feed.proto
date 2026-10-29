@@ -1,0 +1,63 @@
+// Contract for the live traffic stream.
+//
+// The app ships a hand-rolled codec (Packages/FlightFeed/Sources/FlightFeed/Wire)
+// that follows the same ideas so the exercise builds offline with no
+// dependencies. In production this file would be compiled with
+// protoc-gen-swift + protoc-gen-grpc-swift-2 and the generated client would
+// sit behind the `FeedTransport` protocol.
+
+syntax = "proto3";
+
+package livefeed.v1;
+
+service LiveFeed {
+  // Bidirectional: the client sends a new request whenever the viewport
+  // changes, the server streams a snapshot first and then deltas.
+  rpc Subscribe(stream SubscribeRequest) returns (stream FeedBatch);
+}
+
+message Viewport {
+  double min_lat = 1;
+  double max_lat = 2;
+  double min_lon = 3; // min_lon > max_lon means the box crosses the antimeridian
+  double max_lon = 4;
+}
+
+message SubscribeRequest {
+  Viewport viewport = 1;               // unset = whole world
+  optional double zoom = 2;            // web map zoom the client is showing
+  // When set (with zoom), the server runs the client's dead-reckoning and only
+  // forwards a report once the prediction is off by more than this many
+  // screen points, plus a per-flight heartbeat. Unset = every report.
+  optional double error_threshold_points = 3;
+}
+
+message FlightInfo {
+  uint32 id = 1;
+  string callsign = 2;
+  string aircraft_type = 3;
+  string origin = 4;
+  string destination = 5;
+}
+
+// Columnar ("struct of arrays") position reports. Every repeated field is
+// packed, so one column is one length-delimited run of varints. All columns
+// have the same length; row i across columns is one report.
+message PositionColumns {
+  repeated sint32 id_delta = 1;          // delta against the previous id
+  repeated sint32 lat_e5 = 2;            // 1e-5 degrees
+  repeated sint32 lon_e5 = 3;
+  repeated sint32 altitude_ft = 4;
+  repeated uint32 ground_speed_kt = 5;
+  repeated uint32 track_deci_deg = 6;    // 0.1 degree
+  repeated sint32 vertical_rate_fpm = 7;
+  repeated uint32 age_ms = 8;            // report age when the frame was sent
+}
+
+message FeedBatch {
+  uint64 server_time_ms = 1;
+  bool is_snapshot = 2;                  // true: replace all client state
+  repeated FlightInfo added = 3;         // flights entering the subscription
+  repeated sint32 removed_id_delta = 4;  // flights leaving it (landed / out of view)
+  PositionColumns positions = 5;
+}
